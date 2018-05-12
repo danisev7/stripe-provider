@@ -39,7 +39,7 @@ extension HTTPHeaderName {
         return .init("Stripe-Version")
     }
     public static var stripeAccount: HTTPHeaderName {
-        return .init("Stripe-Version")
+        return .init("Stripe-Account")
     }
 }
 
@@ -55,25 +55,27 @@ extension HTTPHeaders {
 public class StripeAPIRequest: StripeRequest {
     private let httpClient: Client
     private let apiKey: String
+    private let testApiKey: String?
     
-    init(httpClient: Client, apiKey: String) {
+    init(httpClient: Client, apiKey: String, testApiKey: String?) {
         self.httpClient = httpClient
         self.apiKey = apiKey
+        self.testApiKey = testApiKey
     }
     
     public func send<SM: StripeModel>(method: HTTPMethod, path: String, query: String, body: String, headers: HTTPHeaders) throws -> Future<SM> {
-        let encodedHTTPBody = HTTPBody(string: body)
-        
         var finalHeaders: HTTPHeaders = .stripeDefault
         
         headers.forEach { finalHeaders.add(name: $0.name, value: $0.value) }
         
+        // Get the appropiate API key based on the environment and if the test key is present
+        let apiKey = self.httpClient.container.environment == .development ? (self.testApiKey ?? self.apiKey) : self.apiKey
         finalHeaders.add(name: .authorization, value: "Bearer \(apiKey)")
-        
-        let request = HTTPRequest(method: method, url: URL(string: "\(path)?\(query)") ?? .root, headers: finalHeaders, body: encodedHTTPBody)
-        
-        return try httpClient.respond(to: Request(http: request, using: httpClient.container)).flatMap(to: SM.self) { (response) -> Future<SM> in
-            return try self.serializedResponse(response: response.http, worker: self.httpClient.container.eventLoop)
+
+        return httpClient.send(method, headers: finalHeaders, to: "\(path)?\(query)") { (request) in
+            request.http.body = HTTPBody(string: body)            
+            }.flatMap(to: SM.self) { (response) -> Future<SM> in
+                return try self.serializedResponse(response: response.http, worker: self.httpClient.container.eventLoop)
         }
     }
 }
